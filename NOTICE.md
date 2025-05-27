@@ -1,6 +1,10 @@
 # NOTICE
 
-This project makes use of the following third-party components:
+This project is a student assignment submitted as part of coursework.
+
+It does not provide or imply any license for public redistribution or use.
+
+However, the following third-party components were used or adapted during development:
 
 ---
 
@@ -222,3 +226,11 @@ This license is permissive and does not require reproduction below.
    See the License for the specific language governing permissions and
    limitations under the License.
 ```
+
+## 3. bulgogi (template-based)
+
+This project incorporates parts of [bulgogi](https://github.com/bulgogi-framework/bulgogi),  
+a lightweight web framework template authored and maintained by JeongHan-Bae.
+
+- Original License: MIT License
+    - This project includes a **modified version** of bulgogi's core.

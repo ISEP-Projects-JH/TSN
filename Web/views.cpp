@@ -1,9 +1,13 @@
 #include "views.hpp"
 #include "bulgogi.hpp"
-#include "template.hpp"
+#include "../Application/UserModelHandler.hpp"
+#include "../Application/FabricInfoHandler.hpp"
+#include "../Application/Business.hpp"
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/json.hpp>
 #include <iostream>
+#include <random>
+#include <mysql/mysql.h>
 
 namespace json = boost::json;
 using bulgogi::Request; /// @brief HTTP request
@@ -11,26 +15,34 @@ using bulgogi::Response; /// @brief HTTP response
 using bulgogi::check_method; /// @brief Check HTTP method
 using bulgogi::set_json; /// @brief Set JSON response
 
-/// @brief Methods to download text files, un-comment to use
-/*
-namespace download_types {
-    constexpr jh::pod::array<char, 32> CSV  = {"csv"};
-    constexpr jh::pod::array<char, 32> TSV  = {"tab-separated-values"};
-    constexpr jh::pod::array<char, 32> YAML = {"yaml"};
-    constexpr jh::pod::array<char, 32> HTML = {"html"};
-    constexpr jh::pod::array<char, 32> PLAIN = {"plain"};
-    constexpr jh::pod::array<char, 32> MD   = {"markdown"};
-    constexpr jh::pod::array<char, 32> XML  = {"xml"};
+std::mt19937 &global_rng() {
+    static std::mt19937 rng([] {
+        std::random_device rd;
+        return std::mt19937(rd() ^ static_cast<unsigned>(time(nullptr)));
+    }());
+    return rng;
 }
 
-using download_csv = bulgogi::set_download<download_types::CSV>;
-using download_tsv = bulgogi::set_download<download_types::TSV>;
-using download_yaml = bulgogi::set_download<download_types::YAML>;
-using download_html = bulgogi::set_download<download_types::HTML>;
-using download_plain = bulgogi::set_download<download_types::PLAIN>;
-using download_md = bulgogi::set_download<download_types::MD>;
-using download_xml = bulgogi::set_download<download_types::XML>;
-*/
+
+static MYSQL *g_mysql_conn = nullptr;
+static std::unique_ptr<social::UserModelHandler> g_user_handler{};
+static std::unique_ptr<fabric::FabricInfoHandler> g_fabric_handler{};
+
+inline bool ensure_mysql_ready(bulgogi::Response &res, MYSQL *conn) {
+    if (!conn || !g_user_handler || !g_fabric_handler) {
+        set_json(res, {{
+                               "error",   "MySQL not connected or handlers uninitialized"},
+                       {       "missing", {
+                                                  {"conn", conn == nullptr},
+                                                  {"user_handler", g_user_handler == nullptr},
+                                                  {"fabric_handler", g_fabric_handler == nullptr}
+                                          }},
+                       {       "hint",    "POST /api/set_db_connection to reinitialize"
+                       }}, 500);
+        return false; // means early return
+    }
+    return true;
+}
 
 /// @brief Global function map for registered urls
 std::unordered_map<std::string, views::HandlerFunc> views::function_map;
@@ -41,29 +53,43 @@ extern std::atomic<bool> g_should_exit;
 /// @brief Global acceptor for TCP connections
 extern std::unique_ptr<boost::asio::ip::tcp::acceptor> global_acceptor;
 
-#ifndef NDEBUG
-/// @brief Default root view for the server
-REGISTER_ROOT_VIEW(default_root) {
-    if (!check_method(req, bulgogi::http::verb::get, res)) return;
-    bulgogi::set_html(res, default_page::html, 200);
-}
-
-#endif
-
-
 void views::init() {
-    /// Todo: Add initialization code if needed
+    g_mysql_conn = mysql_init(nullptr);
+    if (!g_mysql_conn) {
+        throw std::runtime_error("mysql_init failed");
+    }
 }
+
 
 void views::atexit() {
-    /// Todo: Add cleanup code if needed
+    g_user_handler.reset();
+    g_fabric_handler.reset();
+
+    if (g_mysql_conn) {
+        mysql_close(g_mysql_conn);
+        g_mysql_conn = nullptr;
+        std::cout << "[Exit] MySQL connection closed.\n";
+    }
 }
+
 
 void views::check_head([[maybe_unused]] const bulgogi::Request &req) {
-    /// Todo: Implement global check_head logic for cors if needed
-    // Example: throw std::runtime_error("Unauthorized") if missing Authorization
-}
+    if (req.find("Origin") != req.end()) {
+        std::string origin = std::string(req["Origin"]);
+        if (origin.empty()) {
+            // dev: simulate all non-empty origins as allowed
+            throw std::runtime_error("CORS blocked: origin not allowed");
+        }
+    }
 
+    if (req.find("Access-Control-Request-Headers") != req.end()) {
+        std::string headers = std::string(req["Access-Control-Request-Headers"]);
+        if (headers.find("Authorization") == std::string::npos &&
+            headers.find("authorization") == std::string::npos) {
+            throw std::runtime_error("CORS preflight failed: Authorization not allowed");
+        }
+    }
+}
 
 REGISTER_VIEW(ping) {
     if (!check_method(req, bulgogi::http::verb::get, res)) return;
@@ -91,74 +117,327 @@ REGISTER_VIEW(shutdown_server) {
     set_json(res, {{"status", "server_shutdown_requested"}});
 }
 
-/// @brief Following functions are examples of how to handle GET and POST requests, un-comment to use
-/*
-// === Example GET ===
-REGISTER_VIEW(example_get) {
-    if (!check_method(req, bulgogi::http::verb::get, res)) return;
+REGISTER_VIEW(api, simulate_day) {
+    if (!check_method(req, bulgogi::http::verb::post, res)) return;
+    if (!ensure_mysql_ready(res, g_mysql_conn)) return;
 
-    // Parse URL query: /example_get?name=xyz
-    std::string target = std::string(req.target());
-    auto pos = target.find('?');
-    std::string name = "anonymous";
-    if (pos != std::string::npos) {
-        std::string query = target.substr(pos + 1);
-        auto equal_pos = query.find('=');
-        if (equal_pos != std::string::npos && query.substr(0, equal_pos) == "name") {
-            name = query.substr(equal_pos + 1);
+    if (!g_user_handler || !g_fabric_handler) {
+        set_json(res, {{"error", "Handlers not ready"}}, 500);
+        return;
+    }
+
+    auto result = fabric::api::next_day(*g_user_handler, *g_fabric_handler);
+    set_json(res, {
+            {"new_users",          result.new_users},
+            {"new_friendships",    result.new_friendships},
+            {"total_interactions", result.total_interactions}
+    });
+}
+
+REGISTER_VIEW(api, get_user_profile) {
+    if (!check_method(req, bulgogi::http::verb::get, res)) return;
+    if (!ensure_mysql_ready(res, g_mysql_conn)) return;
+
+    auto params = bulgogi::get_query_param(req, "id");
+    if (!params) {
+        set_json(res, {{"error", "Missing user ID"}}, 400);
+        return;
+    }
+
+    uint32_t user_id = std::stoul(*params);
+    try {
+        auto profile = fabric::api::get_user_profile(user_id, *g_user_handler, *g_fabric_handler);
+        set_json(res, fabric::api::to_json(profile, user_id));
+    } catch (const std::exception &e) {
+        set_json(res, {{"error", e.what()}}, 500);
+    }
+}
+
+REGISTER_VIEW(api, get_user_profile_simple) {
+    if (!check_method(req, bulgogi::http::verb::get, res)) return;
+    if (!ensure_mysql_ready(res, g_mysql_conn)) return;
+
+    auto params = bulgogi::get_query_param(req, "id");
+    if (!params) {
+        set_json(res, {{"error", "Missing user ID"}}, 400);
+        return;
+    }
+
+    uint32_t user_id = std::stoul(*params);
+    try {
+        auto simple_profile = fabric::api::get_user_simple_profile(user_id, *g_fabric_handler);
+        set_json(res, fabric::api::simple_json(simple_profile, user_id));
+    } catch (const std::exception &e) {
+        set_json(res, {{"error", e.what()}}, 500);
+    }
+}
+
+REGISTER_VIEW(api, refresh_db) {
+    if (!check_method(req, bulgogi::http::verb::post, res)) return;
+    if (!ensure_mysql_ready(res, g_mysql_conn)) return;
+
+    if (!g_user_handler || !g_fabric_handler) {
+        set_json(res, {{"error", "Handlers not ready"}}, 500);
+        return;
+    }
+
+    try {
+        fabric::api::clear_all(*g_user_handler, *g_fabric_handler);
+        uint32_t new_user_count = fabric::api::initialize_population(*g_user_handler, *g_fabric_handler);
+        set_json(res, {{"status",    "database_refreshed"},
+                       {"new_users", new_user_count}});
+    } catch (const std::exception &e) {
+        set_json(res, {{"error", e.what()}}, 500);
+    }
+}
+
+REGISTER_VIEW(api, random_user_id) {
+    if (!check_method(req, bulgogi::http::verb::get, res)) return;
+    if (!ensure_mysql_ready(res, g_mysql_conn)) return;
+
+    if (!g_fabric_handler) {
+        set_json(res, {{"error", "Fabric handler not ready"}}, 500);
+        return;
+    }
+
+    try {
+        uint32_t user_id = fabric::api::random_user_id(*g_fabric_handler);
+        set_json(res, {{"user_id", user_id}});
+    } catch (const std::exception &e) {
+        set_json(res, {{"error", e.what()}}, 500);
+    }
+}
+
+REGISTER_VIEW(api, get_total_count) {
+    if (!check_method(req, bulgogi::http::verb::get, res)) return;
+    if (!ensure_mysql_ready(res, g_mysql_conn)) return;
+
+    if (!g_fabric_handler) {
+        set_json(res, {{"error", "Fabric handler not ready"}}, 500);
+        return;
+    }
+
+    try {
+        uint32_t total_count = g_fabric_handler->get_count();
+        set_json(res, {{"total_users", total_count}});
+    } catch (const std::exception &e) {
+        set_json(res, {{"error", e.what()}}, 500);
+    }
+}
+
+REGISTER_VIEW(api, batch_get_simple_profiles) {
+    if (!check_method(req, bulgogi::http::verb::post, res)) return;
+    if (!ensure_mysql_ready(res, g_mysql_conn)) return;
+
+    auto body = json::parse(req.body());
+    if (!body.is_array()) {
+        set_json(res, {{"error", "Invalid request format"}}, 400);
+        return;
+    }
+
+    boost::json::array user_ids = body.as_array();
+    boost::json::array profiles_json;
+
+    try {
+        for (const auto &id: user_ids) {
+            if (!id.is_uint64()) continue; // Skip invalid IDs
+            uint32_t user_id = id.as_uint64();
+            auto simple_profile = fabric::api::get_user_simple_profile(user_id, *g_fabric_handler);
+            profiles_json.emplace_back(fabric::api::simple_json(simple_profile, user_id));
+        }
+        set_json(res, {{"profiles", profiles_json}});
+    } catch (const std::exception &e) {
+        set_json(res, {{"error", e.what()}}, 500);
+    }
+}
+
+REGISTER_VIEW(api, recommend_fof) {
+    // use social::recommend_a_star
+    if (!check_method(req, bulgogi::http::verb::get, res)) return;
+    if (!ensure_mysql_ready(res, g_mysql_conn)) return;
+
+    auto ids_obj = bulgogi::get_json_obj(req)["user_ids"];
+    if (!ids_obj.is_array() || ids_obj.as_array().empty()) {
+        set_json(res, {{"error", "Missing or invalid user IDs"}}, 400);
+        return;
+    }
+    auto ids = ids_obj.as_array();
+    std::vector<uint32_t> user_ids;
+    for (const auto &id: ids) {
+        if (!id.is_int64()) {
+            set_json(res, {{"error", "Invalid user ID format"}}, 400);
+            return;
+        }
+        user_ids.push_back(id.as_int64());
+    }
+    auto result = g_fabric_handler->batch_load_users_by_ids(user_ids);
+
+    boost::json::array profiles_json;
+
+    for (const auto &user: result) {
+        if (user.user_id == INVALID_FRIEND_ID) continue; // Skip invalid entries
+        try {
+            auto profile = fabric::api::get_user_simple_profile(user.user_id, *g_fabric_handler);
+            profiles_json.emplace_back(fabric::api::simple_json(profile, user.user_id));
+        } catch (const std::exception &e) {
+            set_json(res, {{"error", e.what()}}, 500);
+            return;
         }
     }
 
-    bulgogi::set_json(res, {
-            {"message", "Hello " + name}
-    });
 }
 
-// === Example POST ===
-REGISTER_VIEW(example_post) {
-    if (!check_method(req, bulgogi::http::verb::post, res)) return;
+REGISTER_VIEW(api, recommend_strangers) {
+    // use social::recommend_strangers
+    if (!check_method(req, bulgogi::http::verb::get, res)) return;
+    if (!ensure_mysql_ready(res, g_mysql_conn)) return;
 
+    auto params = bulgogi::get_query_param(req, "id");
+    if (!params) {
+        set_json(res, {{"error", "Missing user ID"}}, 400);
+        return;
+    }
+    uint32_t user_id = std::stoul(*params);
     try {
-        auto obj = bulgogi::get_json_obj(req);
-        std::string name = obj.contains("name") ? obj["name"].as_string().c_str() : "anonymous";
-        bulgogi::set_json(res, {
-                {"message", "Received POST from " + name}
-        });
-    } catch (...) {
-        bulgogi::set_json(res, {{"error", "Invalid JSON"}}, 400);
+        auto user = g_user_handler->load_user_by_id(user_id);
+        auto recommendations = social::recommend_strangers<20>(user, *g_user_handler);
+        boost::json::array recommendations_json;
+        for (const jh::pod::pod_like auto &id: recommendations) {
+            if (id != INVALID_FRIEND_ID) {
+                recommendations_json.emplace_back(id);
+            } else break; // Reach end of valid recommendations
+        }
+        set_json(res, {{"recommendations", recommendations_json}});
+    } catch (const std::exception &e) {
+        set_json(res, {{"error", e.what()}}, 500);
     }
 }
 
-// === GET with query param: /example_with_param?param=abc ===
-REGISTER_VIEW(example_with_param) {
-    if (!bulgogi::check_method(req, bulgogi::http::verb::get, res)) return;
-
-    auto param = bulgogi::get_query_param(req, "param").value_or("none");
-
-    bulgogi::set_json(res, {
-        {"route", "example_with_param"},
-        {"param", param}
-    });
-}
-
-
-// === HEAD request example ===
-REGISTER_VIEW(example_head) {
-    if (!check_method(req, bulgogi::http::verb::head, res)) return;
-
-    res.result(bulgogi::http::status::ok);
-    res.set(bulgogi::http::field::content_type, "text/plain");
-    res.content_length(0); // bodiless for HEAD
-}
-
-// === Multiple components in URL ===
-REGISTER_VIEW(api, user, info) {
+REGISTER_VIEW(api, get_user_friends) {
     if (!check_method(req, bulgogi::http::verb::get, res)) return;
+    if (!ensure_mysql_ready(res, g_mysql_conn)) return;
 
-    set_json(res, {
-            {"user",   "bulgogi-eater"},
-            {"status", "ok"},
-            {"route",  "api/user/info"}
-    });
+    auto params = bulgogi::get_query_param(req, "id");
+    if (!params) {
+        set_json(res, {{"error", "Missing user ID"}}, 400);
+        return;
+    }
+
+    uint32_t user_id = std::stoul(*params);
+    try {
+        auto friends = fabric::api::get_user_friends(user_id, *g_user_handler, *g_fabric_handler);
+        boost::json::array friends_json;
+        for (uint32_t fid: friends) {
+            friends_json.emplace_back(fid);
+        }
+        set_json(res, {{"friends", friends_json}});
+    } catch (const std::exception &e) {
+        set_json(res, {{"error", e.what()}}, 500);
+    }
 }
-*/
+
+
+const char *db_source = R"__db_src__(
+-- Temporarily disable foreign key checks to prevent dependency errors during creation
+SET
+FOREIGN_KEY_CHECKS = 0;
+
+-- ---------------------------------------------------------
+-- Create the parent table: `UsersFabric`
+-- Stores user base metadata (name, avatar, gender via avatar_id)
+-- ---------------------------------------------------------
+DROP TABLE IF EXISTS `UsersFabric`;
+CREATE TABLE `UsersFabric`
+(
+    `user_id`       BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, -- Unique user ID, auto-generated
+    `first_name_id` INT UNSIGNED NOT NULL,                   -- Index to backend-maintained first name pool
+    `last_name_id`  INT UNSIGNED NOT NULL,                   -- Index to backend-maintained last name pool
+    `avatar_id`     INT UNSIGNED NOT NULL,                   -- Index to avatar list, also encodes gender (even: male, odd: female)
+    PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+  AUTO_INCREMENT = 1;
+
+-- ---------------------------------------------------------
+-- Create the child table: `UserModels`
+-- Holds interests, tags, and friend interactions for each user
+-- ---------------------------------------------------------
+DROP TABLE IF EXISTS `UserModels`;
+CREATE TABLE `UserModels`
+(
+    `user_id`      BIGINT UNSIGNED NOT NULL, -- FK to UsersFabric.user_id
+    `interests_16` BIGINT UNSIGNED NOT NULL, -- 16 x 4-bit encoded interest scores (0–15)
+    `base_64_bits` BIGINT UNSIGNED NOT NULL, -- 64 x 1-bit boolean/one-hot tags
+    `friends`      BLOB NOT NULL,            -- Serialized friend array: pod::array<pair<uint32_t, uint32_t>, 256>
+    PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- ---------------------------------------------------------
+-- Add foreign key constraint linking model to fabric
+-- Ensures one-to-one relation; cascade on delete/update
+-- ---------------------------------------------------------
+ALTER TABLE `UserModels`
+    ADD CONSTRAINT `fk_user_id`
+        FOREIGN KEY (`user_id`)
+            REFERENCES `UsersFabric` (`user_id`)
+            ON DELETE CASCADE
+            ON UPDATE CASCADE;
+
+-- Restore foreign key checks
+SET
+FOREIGN_KEY_CHECKS = 1;
+
+)__db_src__";
+
+REGISTER_VIEW(api, set_db_connection) {
+    if (!check_method(req, bulgogi::http::verb::post, res)) return;
+
+    auto body = json::parse(req.body());
+    auto host = json::value_to<std::string>(body.at("host"));
+    auto user = json::value_to<std::string>(body.at("user"));
+    auto password = json::value_to<std::string>(body.at("password"));
+    auto dbname = json::value_to<std::string>(body.at("database"));
+    auto port = json::value_to<uint32_t>(body.at("port"));
+
+    try {
+        // Disconnect
+        views::atexit();
+
+        auto renew = bulgogi::get_query_param(req, "renew");
+
+        // Reconnect with new config
+        g_mysql_conn = mysql_init(nullptr);
+        if (!mysql_real_connect(g_mysql_conn, host.c_str(), user.c_str(), password.c_str(),
+                                dbname.c_str(), port, nullptr, 0)) {
+            throw std::runtime_error(mysql_error(g_mysql_conn));
+        }
+
+        if (renew && *renew == "true") {
+            std::istringstream ss(db_source);
+            std::string line, statement;
+
+            std::cout << db_source << std::endl;
+
+            while (std::getline(ss, line)) {
+                if (line.empty() || line.starts_with("--")) continue; // skip comments
+
+                statement += line + "\n";
+                if (line.find(';') != std::string::npos) {
+                    std::cout << "[SQL] Executing:\n" << statement << std::endl;
+
+                    if (mysql_query(g_mysql_conn, statement.c_str()) != 0) {
+                        throw std::runtime_error(mysql_error(g_mysql_conn));
+                    }
+                    statement.clear();
+                }
+            }
+        }
+
+        g_user_handler = std::make_unique<social::UserModelHandler>(g_mysql_conn);
+        g_fabric_handler = std::make_unique<fabric::FabricInfoHandler>(g_mysql_conn);
+
+        set_json(res, {{"status", "connected"},
+                       {"db",     dbname}});
+    } catch (const std::exception &e) {
+        set_json(res, {{"error", e.what()}}, 500);
+    }
+}

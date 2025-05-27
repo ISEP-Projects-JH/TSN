@@ -1,169 +1,195 @@
-<p align="right" style="margin-bottom: -30px;">
-  <a href="https://github.com/bulgogi-framework/bulgogi#readme">
-    <img src="https://img.shields.io/badge/Back%20to%20README-black?style=for-the-badge&logo=github" alt="Back to README"/>
-  </a>
-</p>
-
-
 # 📦 Build & Deployment Guide
 
-> This document explains how to build and run the **`bulgogi` project** under the [`bulgogi-framework`](https://github.com/bulgogi-framework) organization using Docker or native build tools.
-> It supports both **development containers** and **slim production images**, while remaining compatible with local-native builds.
+> This document explains how to build and run **TSN (Tailored Social Network)** — a C++20-powered social simulation
+> backend.
+>
+> It supports **development containers**, **slim runtime images**, and optionally embeds a **MySQL database** for fully
+> isolated deployment.
 
 ---
 
-## 🛠️ 1. Development Image (`docker/Dockerfile`)
+## 🧱 Overview
 
-A full Docker-based build environment for debugging, iteration, and testing.
+TSN is a RESTful C++ service that simulates and evolves a synthetic user network.
+It offers friend-of-friend and stranger recommendation systems, compact pod-serialization, and lightweight persistence
+with MySQL.
 
-### ✅ Features
+> 💡 **Note**: This project is designed to run in Docker. Local builds are not supported on Windows.  
+> **ONLY** clang based is Tested (gcc may work but is not guaranteed).
 
-* **Clang/LLVM Toolchain**
-* **CMake 3.27.9** (built from source)
-* **Boost 1.88.0** (with `json` support, built from source)
-* **`jh-toolkit` POD module**, from [`1.3.x-LTS`](https://github.com/JeongHan-Bae/JH-Toolkit/tree/1.3.x-LTS)
-* Full application source code
+---
 
-### 🔧 Build
+## 🛠️ Development Image (`docker/Dockerfile`)
+
+This is a full-featured environment for debugging and iteration.
+
+### Features
+
+* C++20 toolchain (Clang or GCC)
+* Boost 1.88.0 (JSON, ASIO, etc.)
+* jh-toolkit POD (`1.3.x-LTS`)
+* MySQL **client libraries only**
+
+### Build
 
 ```bash
 docker buildx build \
   --platform linux/amd64 \
-  -t bulgogi-dev:latest \
+  -t tsn-dev:latest \
   -f docker/Dockerfile \
+  --load \
   .
 ```
 
-You may use `--build-arg COMPILER=gcc` to switch to GCC.  
-Use `--platform linux/arm64` if your native architecture is ARM64.  
-You may also use `--no-cache` to force a clean build.  
-You may use `docker build` instead of `docker buildx build` if you are not building on exactly the same architecture as the target.  
-
-### ▶️ Run
+### Run
 
 ```bash
-docker run --rm -p 8080:8080 bulgogi-dev:latest
+docker run --rm -p 8080:8080 tsn-dev:latest
 ```
+
+> 🧠 Note: The dev version **does not embed** a MySQL server. Use `set_db_connection` to connect manually.
 
 ---
 
-## 🚀 2. Runtime Image (`docker/Dockerfile.runtime`)
+## 🚀 Runtime Image (`docker/Dockerfile.runtime`)
 
-A **multi-stage minimal runtime image**, ideal for containerized production.
+This is a **multi-stage, minimal deployment** image.
 
-### ✅ Features
+### Features
 
-* **Only final executable included**
-* **Statically linked Boost** (no `.so` required at runtime)
-* **Header-only jh-toolkit::pod**, embedded at compile time
-* Final image size: **\~70MB**
+* Only includes final C++ binary
+* Statically linked Boost
+* **Optional embedded MySQL** via `--build-arg InnerMySQL=true`
 
-### 🔧 Build
+### Build
 
 ```bash
 docker buildx build \
   --platform linux/amd64 \
-  -t bulgogi-app:slim \
+  -t tsn-prod:latest \
   -f docker/Dockerfile.runtime \
-  --build-arg APP=BulgogiAPP \
-  --build-arg PORT=8080 \
+  --build-arg InnerMySQL=true \
+  --load \
   .
 ```
 
-### ▶️ Run
+### Run
 
 ```bash
-docker run --rm -p 8080:8080 bulgogi-app:slim
+docker run --rm -p 8080:8080 tsn-prod:latest
 ```
 
----
-
-## 📁 Build Context & Path Requirements
-
-> 🧭 All `docker build` commands in this document **must be run from the project root directory**.
-
-This is because:
-
-* The `Dockerfile` is located in the `docker/` subdirectory
-* The Docker build context expects the **entire source tree**
-* Relative paths like `COPY ./ ./` and CMake references to rely on **root-relative layout**
-
-✅ **Do not run builds from inside `docs/` or `docker/`** — the paths will break, and your application may not compile or run correctly.
+If built with `InnerMySQL=true`, a local `mysqld` is launched and automatically available to the backend at
+`localhost:3306`.
 
 ---
 
-## ⚙️ `docker build` vs `docker buildx`
+## 🔐 Connecting to MySQL
 
-When choosing between `docker build` and `docker buildx`, keep the following in mind:
+### In Dev Mode
 
-| Feature           | `docker build`                       | `docker buildx`                                                               |
-|-------------------|--------------------------------------|-------------------------------------------------------------------------------|
-| Architecture      | Host-only                            | Same-architecture only (**do NOT cross-build**, since Boost must be compiled) |
-| Optimization      | Full native (`-march=native`)        | Portable or emulated targets                                                  |
-| Speed             | ⚡️ Fast (native toolchain)           | 🐢 Slightly slower (due to metadata + context handling)                       |
-| Image Portability | ❌ Low (host-dependent instructions)  | ✅ High (portable across systems of the same architecture)                     |
-| Use Case          | Local development, profiling, tuning | Reproducible builds, CI/CD pipelines, multi-platform releases                 |
+You must connect manually:
 
-> 🧠 **Tip:** If your machine and your deployment target are exactly the same architecture (e.g., `x86-64-v3`), `docker build` will produce **smaller and faster** images.
-> Use `buildx` only when targeting multiple systems or publishing externally.
+```bash
+POST /api/set_db_connection?renew=true
+```
 
----
+With body:
 
-## 📚 About Boost & JSON
+```json
+{
+  "host": "host.docker.internal",
+  "user": "usr_mdl_usr",
+  "password": "example",
+  "database": "synthetic_users_local",
+  "port": 3306
+}
+```
 
-This project **requires Boost's `json` component**, which was introduced in **Boost 1.75+**, and considered stable from **1.80+**.
+### In Prod Mode
 
-If building **outside Docker**, you must:
+With `InnerMySQL=true`, connect to:
 
-* Install **Boost ≥ 1.80** from [https://www.boost.org](https://www.boost.org)
-* Ensure `boost_system` and `boost_json` are discoverable via CMake
+```json
+{
+  "host": "host.docker.internal",
+  "user": "usr_mdl_usr",
+  "password": "example",
+  "database": "synthetic_users_local",
+  "port": 3306
+}
+```
 
-You may use dynamic linking locally if you prefer smaller binaries.
-
----
-
-## 🔧 About jh-toolkit
-
-This project depends on [`jh-toolkit`](https://github.com/JeongHan-Bae/JH-Toolkit), licensed under Apache 2.0.
-The image uses the `1.3.x-LTS` branch with the **POD (Plain Old Data)** module, which is:
-
-* ✅ Fully template-based
-* ✅ Header-only
-* ✅ Compiled into your application
-
-📄 Full documentation:
-👉 [jh-toolkit POD Module](https://github.com/JeongHan-Bae/JH-Toolkit/blob/1.3.x-LTS/docs/pod.md)
-
-> If you wish to use the **full version** of `jh-toolkit`, follow the instructions in its documentation, and update your `CMakeLists.txt` and Dockerfile accordingly (switch from `-DTAR=POD` to full build).
+If the DB is empty, use `?renew=true` to auto-create schema.
 
 ---
 
-## 🖥️ Local Build (Native Compilation)
+## 🐳 Docker & MySQL Access
 
-Docker is convenient for uniform environments, but **native builds offer**:
-
-* Smaller local disk footprint
-* Better startup performance (no container layer)
-* Direct control over Boost dynamic/static linkage
-
-For **intranet deployments with high request concurrency**, it is **strongly recommended** to:
-
-* Build and deploy natively
-* Use system-installed Boost with dynamic linking
-* Run without Docker to reduce latency
+| Environment    | MySQL Host             | Notes                                    |
+|----------------|------------------------|------------------------------------------|
+| Dev container  | `host.docker.internal` | On macOS/Windows with Docker Desktop     |
+| Linux host     | via bridge/IP          | Use exposed port or user-defined network |
+| Prod container | `localhost`            | Only when built with `InnerMySQL=true`   |
 
 ---
 
-## 📦 Summary
+## 🧪 Full Test Flow
 
-| Method               | Build Tools | Boost             | Toolkit                | Image Size | Usage                      |
-|----------------------|-------------|-------------------|------------------------|------------|----------------------------|
-| `Dockerfile`         | Full        | Dynamic           | POD                    | \~1.4 GB   | Development, Debug         |
-| `Dockerfile.runtime` | Staged      | Static            | POD                    | \~70 MB    | Production (Slim)          |
-| Native               | Manual      | Dynamic preferred | Optional (full or POD) | < app size | Intranet servers, embedded |
+```bash
+bash ./test_api.sh
+```
+
+Steps:
+
+1. Connects to DB
+
+> Assuming using the local MySQL instance:
+```json
+{
+  "host": "host.docker.internal",
+  "user": "usr_mdl_usr",
+  "password": "example",
+  "database": "synthetic_users_local",
+  "port": 3306
+}
+```
+
+2. Resets schema
+3. Populates random users
+4. Simulates 1 day
+5. Prints profile and recommendations
 
 ---
 
-## 🧼 Cleanup
+## 🧩 Native Build
 
-Both Dockerfiles clean up all sources after installation (CMake, Boost, jh-toolkit, build trees) to reduce final size.
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/BulgogiAPP
+```
+
+Make sure:
+
+* You're using a C++20 compiler
+* `libmysqlclient-dev` is installed
+* Boost ≥ 1.80 is available
+* Always run `set_db_connection` to initialize MySQL
+* Use `curl -X POST http://localhost:8080/shutdown_server` to stop the server gracefully
+
+---
+
+## 📦 Image Sizes
+
+| Variant       | Boost   | MySQL          | Image Size | Use Case        |
+|---------------|---------|----------------|------------|-----------------|
+| `tsn-dev`     | dynamic | external       | \~1.4 GB   | Development     |
+| `tsn-prod`    | static  | optional embed | \~90 MB    | Deployment      |
+| Native binary | dynamic | local          | <10 MB     | Intranet/Server |
+
+---
+
+## 📄 Related Docs
+
+* [`api.md`](docs/api.md): All backend endpoints

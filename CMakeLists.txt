@@ -93,13 +93,41 @@ find_package(jh-toolkit REQUIRED)
 add_executable(${APP}
         main.cpp
         Web/views.cpp
+        Application/UserModelHandler.hpp
+        Entities/UserModel.hpp
+        Application/Business.hpp
+        Utils/Fabric.hpp
+        Application/FabricInfoHandler.hpp
 )
 
 # ==== Include & Link ====
 include_directories(${Boost_INCLUDE_DIRS})
 
+# ===== Platform-Specific MySQL Location Logic =====
+if(APPLE)
+    # macOS with Homebrew (M1/M2)
+    set(MYSQL_HOME /opt/homebrew/opt/mysql-client)
+elseif(UNIX)
+    # Linux default
+    set(MYSQL_HOME /usr)
+elseif(WIN32)
+    # Windows manual
+    message(FATAL_ERROR "Please specify MYSQL_HOME manually on Windows")
+endif()
+
+find_path(MYSQL_INCLUDE_DIR
+        NAMES mysql/mysql.h
+        HINTS ${MYSQL_HOME}/include
+)
+
+find_library(MYSQL_CLIENT_LIBRARY
+        NAMES mysqlclient
+        HINTS ${MYSQL_HOME}/lib
+)
+
 target_link_libraries(${APP}
         PRIVATE
         jh::jh-toolkit-pod
         ${Boost_LIBRARIES}
+        ${MYSQL_CLIENT_LIBRARY}
 )

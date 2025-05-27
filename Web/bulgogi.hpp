@@ -53,6 +53,28 @@ namespace bulgogi {
         res.prepare_payload();
     }
 
+    /**
+     * Example usage:
+     * @code
+namespace download_types {
+    constexpr jh::pod::array<char, 32> CSV  = {"csv"};
+    constexpr jh::pod::array<char, 32> TSV  = {"tab-separated-values"};
+    constexpr jh::pod::array<char, 32> YAML = {"yaml"};
+    constexpr jh::pod::array<char, 32> HTML = {"html"};
+    constexpr jh::pod::array<char, 32> PLAIN = {"plain"};
+    constexpr jh::pod::array<char, 32> MD   = {"markdown"};
+    constexpr jh::pod::array<char, 32> XML  = {"xml"};
+}
+
+using download_csv = bulgogi::set_download<download_types::CSV>;
+using download_tsv = bulgogi::set_download<download_types::TSV>;
+using download_yaml = bulgogi::set_download<download_types::YAML>;
+using download_html = bulgogi::set_download<download_types::HTML>;
+using download_plain = bulgogi::set_download<download_types::PLAIN>;
+using download_md = bulgogi::set_download<download_types::MD>;
+using download_xml = bulgogi::set_download<download_types::XML>;
+     * @endcode
+     */
     template<jh::pod::array<char, 32> Mime>
     struct [[maybe_unused]] set_download {
         [[maybe_unused]]
@@ -135,3 +157,13 @@ namespace bulgogi {
     }
 
 }
+/**
+ * @page usage_examples 使用范例
+ *
+ * 这个页面展示了如何使用 @ref views::check_head 方法。
+ *
+ * \code{.cpp}
+ * MyClass obj;
+ * obj.doSomething();
+ * \endcode
+ */

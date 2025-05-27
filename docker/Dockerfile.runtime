@@ -83,12 +83,33 @@ RUN cmake -G Ninja -B build \
 FROM ubuntu:22.04 AS runtime
 ARG APP
 ARG PORT
+ARG InnerMySQL=false
+ARG MYSQL_USER=usr_mdl_usr
+ARG MYSQL_PASS=example
+ARG MYSQL_DB=synthetic_users_local
+ARG MYSQL_PORT=3306
 
-# Copy final binary only
+# 1. Install runtime deps (minimal) + optionally mysql-server
+RUN apt-get update && \
+    apt-get install -y libmysqlclient-dev \
+    && if [ "$InnerMySQL" = "true" ]; then \
+        apt-get install -y mysql-server && \
+        rm -rf /var/lib/mysql && mkdir -p /var/lib/mysql && \
+        chown -R mysql:mysql /var/lib/mysql && \
+        mysqld --initialize-insecure --user=mysql && \
+        service mysql start && \
+        sleep 3 && \
+        mysql -u root -e "CREATE DATABASE IF NOT EXISTS ${MYSQL_DB};" && \
+        mysql -u root -e "CREATE USER IF NOT EXISTS '${MYSQL_USER}'@'localhost' IDENTIFIED BY '${MYSQL_PASS}';" && \
+        mysql -u root -e "GRANT ALL PRIVILEGES ON ${MYSQL_DB}.* TO '${MYSQL_USER}'@'localhost'; FLUSH PRIVILEGES;"; \
+    fi && \
+    rm -rf /var/lib/apt/lists/*
+
+# 2. Copy app binary
 COPY --from=builder /tmp/${APP}/build/${APP} /usr/app/${APP}
 
-# Runtime metadata
+# 3. Expose + CMD
 WORKDIR /usr/app
 EXPOSE ${PORT}
 ENV APP=${APP}
-CMD ["sh", "-c", "/usr/app/${APP}"]
+CMD ["sh", "-c", "mysqld --port=${MYSQL_PORT} & /usr/app/${APP}"]

@@ -1,405 +1,322 @@
-<p align="right" style="margin-bottom: -30px;">
-  <a href="https://github.com/bulgogi-framework/bulgogi#readme">
-    <img src="https://img.shields.io/badge/Back%20to%20README-black?style=for-the-badge&logo=github" alt="Back to README"/>
-  </a>
-</p>
+# 📡 API Documentation
 
-# 📖 API Documentation
+This document describes all available backend API endpoints, including usage, parameters, expected responses, and initialization behavior.
 
-## 📌 Table of Contents
-
-- [🧭 Route Definition](#-route-definition)
-- [🧰 `bulgogi` Utilities](#-bulgogi-utilities)
-- [📦 `jh::pod` Introduction](#-jhpod-introduction)
+> ℹ️ Note: For Docker-specific SQL setup, see [`build.md`](../build.md)
 
 ---
 
-## 🧭 Route Definition
+## 🔐 `/api/set_db_connection`
 
-### 🪄 Registering Views
+**Purpose**: Establish a database connection dynamically (for local or containerized environments).
+**Method**: `POST`
 
-Use macros to declare routes concisely:
+**Query parameter**:
 
-```c++
-REGISTER_VIEW(ping) {
-    if (!bulgogi::check_method(req, bulgogi::http::verb::get, res)) return;
-    bulgogi::set_json(res, {{"status", "alive"}});
+* `renew=true` (optional) → if provided, **creates all required tables** using the embedded SQL schema.
+
+**Request body (JSON)**:
+
+```json
+{
+  "host": "localhost",
+  "user": "usr_mdl_usr",
+  "password": "example",
+  "database": "synthetic_users_local",
+  "port": 3306
 }
 ```
 
-This binds `/ping` to the handler above.
+**Successful response**:
+
+```json
+{
+  "status": "connected",
+  "db": "synthetic_users_local"
+}
+```
+
+**Error cases**:
+
+* Invalid credentials or unreachable server
+* Missing tables (if `renew` is not used)
+* Server not initialized
 
 ---
 
-### 🔁 `REGISTER_VIEW_URLS` — Explicit Route Binding
+## 🧪 `/api/ping`
 
-```c++
-REGISTER_VIEW_URLS(my_handler,
-    "user-info",
-    "user_info",
-    "user/info"
-) {
-    // handler code
-}
-```
+Check if the server is alive.
+**Method**: `GET`
 
-Use this macro when:
+**Response**:
 
-* ✅ Your URL path contains characters that can't appear in function names (e.g. `-`)
-* ✅ You want **multiple equivalent routes** to point to the same handler
-* ✅ You need a path with **more than 5 segments** (which `REGISTER_VIEW(...)` does not support)
-
-#### Key Differences vs `REGISTER_VIEW(...)`:
-
-| Feature                           | `REGISTER_VIEW(...)` | `REGISTER_VIEW_URLS(...)` |
-|-----------------------------------|----------------------|---------------------------|
-| Function name auto-mapped to path | ✅ Yes                | ❌ Manual only             |
-| Supports `-` in URL path          | ❌ No                 | ✅ Yes                     |
-| Supports more than 5 segments     | ❌ No (1–5 max)       | ✅ Unlimited               |
-| Multiple equivalent paths         | ❌ One path only      | ✅ Multi-path registration |
-| Easier to read for custom routes  | 🚫 Limited           | ✅ Recommended for aliases |
-
-#### Example: Route with hyphen and slashes
-
-```c++
-REGISTER_VIEW_URLS(get_user_info,
-    "user-info",     // kebab-case alias
-    "user_info",     // snake_case
-    "user/info"      // REST-style
-) {
-    if (!bulgogi::check_method(req, bulgogi::http::verb::get, res)) return;
-    std::string id = bulgogi::get_query_param(req, "id").value_or("unknown");
-    bulgogi::set_json(res, {{"user", id}});
-}
+```json
+{ "status": "alive" }
 ```
 
 ---
 
-💡 Tip: You can mix `REGISTER_VIEW(...)` for simple routes and `REGISTER_VIEW_URLS(...)` for special cases.
+## 🚨 `/api/shutdown_server`
 
-
-### Supported macros:
-
-| Macro                             | URL Path       | Notes                                |
-|-----------------------------------|----------------|--------------------------------------|
-| `REGISTER_VIEW(ping)`             | `/ping`        | Normal route                         |
-| `REGISTER_ROOT_VIEW(main)`        | `/`            | Root fallback (debug)                |
-| `REGISTER_VIEW(api, user, id)`    | `/api/user/id` | Multi-part route                     |
-| `REGISTER_VIEW_URLS(f, paths...)` | Custom         | Manual control, aliases, `-` support |
-
-Multi-part routes are joined with `/`, and function name becomes `api__user__id`.
-
-### 🧠 When to Use Which Macro?
-
-Use this table to decide which macro to use:
-
-| Use Case                                   | Recommended Macro         |
-|--------------------------------------------|---------------------------|
-| Simple routes, function name matches       | `REGISTER_VIEW(...)`      |
-| Root path `/`                              | `REGISTER_ROOT_VIEW(...)` |
-| URL has `-` or doesn't match function name | `REGISTER_VIEW_URLS(...)` |
-| Multiple equivalent routes                 | `REGISTER_VIEW_URLS(...)` |
-| Deep routes (> 5 segments)                 | `REGISTER_VIEW_URLS(...)` |
+Shut down the backend gracefully.
+**Method**: `POST`
 
 ---
 
-### 🧪 Handler Basics
+## 🔁 `/api/refresh_db`
 
-Each route receives:
+Clear the database and repopulate it with synthetic users.
+**Method**: `POST`
 
-```c++
-void my_handler(const bulgogi::Request& req, bulgogi::Response& res);
-```
+**Response**:
 
-Use utility functions to simplify logic:
-
-```c++
-if (!bulgogi::check_method(req, http::verb::post, res)) return;
-auto obj = bulgogi::get_json_obj(req);
-```
-
----
-
-### 🔍 Examples
-
-#### GET with query parameter
-
-```c++
-// GET /greet?name=John
-REGISTER_VIEW(greet) {
-if (!bulgogi::check_method(req, bulgogi::http::verb::get, res)) return;
-std::string name = bulgogi::get_query_param(req, "name").value_or("anonymous");
-bulgogi::set_json(res, {{ "hello", name }});
-}
-```
-
-#### POST with JSON body
-
-```c++
-REGISTER_VIEW(echo) {
-    if (!bulgogi::check_method(req, bulgogi::http::verb::post, res)) return;
-    auto obj = bulgogi::get_json_obj(req);
-    bulgogi::set_json(res, {{"you_said", obj["msg"]}});
-}
-```
-
-> ⚠️ Will throw on invalid JSON — suggest wrap in try-catch or validate `req.body()` first.
-
-#### HEAD route
-
-```c++
-REGISTER_VIEW(status) {
-    if (!bulgogi::check_method(req, bulgogi::http::verb::head, res)) return;
-    res.result(bulgogi::http::status::ok);
-    res.set(bulgogi::http::field::content_type, "text/plain");
-    res.content_length(0);
+```json
+{
+  "status": "database_refreshed",
+  "new_users": 123
 }
 ```
 
 ---
 
-## 🧰 `bulgogi` Utilities
+## 🎲 `/api/random_user_id`
 
-The `bulgogi` namespace wraps essential functionality from Boost.Beast.
+Get a randomly selected valid user ID.
+**Method**: `GET`
 
-### 🔎 Types
+**Response**:
 
-```c++
-using bulgogi::Request;   // HTTP request (string body)
-using bulgogi::Response;  // HTTP response
-```
-
-### ✔️ Method Check
-
-```c++
-bool bulgogi::check_method(const Request& req, http::verb expected, Response& res);
-```
-
-Returns `false` and responds with `405` JSON if mismatched.
-
-### 📤 Response Utilities
-
-```c++
-bulgogi::set_json(res, {{"ok", true}});
-bulgogi::set_text(res, "hello");
-bulgogi::set_html(res, "<h1>Hi</h1>");
-bulgogi::set_binary(res, raw_data, "dump.bin");
-```
-
-### 🌐 CORS & Redirect
-
-```c++
-bulgogi::apply_cors(res);                          // Adds Access-Control-* headers
-bulgogi::set_redirect(res, "/home", 302);          // Redirects with Location
-```
-
-### 🔍 Request Helpers
-
-```c++
-auto json = bulgogi::get_json_obj(req);            // Parses body to boost::json::object
-auto name = bulgogi::get_query_param(req, "q");    // Extracts ?q= from URL
+```json
+{ "user_id": 42 }
 ```
 
 ---
 
-### ⚙️ `views.cpp` Custom Hooks
 
-You may optionally implement the following functions in `views.cpp` to add global logic:
+## 🔢 `/api/get_total_count`
 
-```c++
-namespace views {
-    void init();   // Called once during startup
-    void atexit(); // Called once on shutdown
-    void check_head(const bulgogi::Request& req); // Called before CORS headers are applied
+Get the **total number of users** currently stored in the database.
+
+**Method**: `GET`
+
+**Response**:
+
+```json
+{
+  "total_users": 12345
 }
 ```
 
-#### 🔸 `void views::init()`
+**Error response** (e.g. MySQL not ready or handler not initialized):
 
-```c++
-void views::init() {
-    /// Todo: Add initialization code if needed (e.g. DB connections, logging setup)
-}
-```
-
-Called **once during application startup**, before any routes are registered.
-
----
-
-#### 🔸 `void views::atexit()`
-
-```c++
-void views::atexit() {
-    /// Todo: Add cleanup code if needed (e.g. closing resources)
-}
-```
-
-Called **once at shutdown**, before exiting the application.
-
----
-
-#### 🔸 `void views::check_head(const bulgogi::Request& req)`
-
-```c++
-void views::check_head([[maybe_unused]] const bulgogi::Request& req) {
-    /// Todo: Implement global CORS/token validation if needed
-    // Example: throw std::runtime_error("Unauthorized") if missing Authorization
-}
-```
-
-Called automatically in `bulgogi::apply_cors()`.
-
-* Throw an exception here to **block unauthorized requests**.
-* The framework will catch it and return a `401 Unauthorized` response automatically.
-
----
-
-> ✅ These are **optional**. Empty implementations are valid.
-
----
-
-### 📥 Download Support
-
-Download text as a file with content-type:
-
-```c++
-namespace download_types {
-    constexpr jh::pod::array<char, 32> CSV = {"csv"};
-}
-using download_csv = bulgogi::set_download<download_types::CSV>;
-
-REGISTER_VIEW(download_data) {
-    std::string csv = "name,score\nAlice,90\nBob,88\n";
-    download_csv::apply(res, csv, "result.csv");
+```json
+{
+  "error": "Fabric handler not ready"
 }
 ```
 
 ---
 
-### ⚠️ Runtime Error Handling
+## 📦 `/api/batch_get_simple_profiles`
 
-By default, route execution in `main` is wrapped with an exception catcher:
+Get **lightweight profiles** for multiple users in one call.
 
-```c++
-try {
-    it->second(req, hres);
-} catch (const std::exception &e) {
-#ifndef NDEBUG
-    bulgogi::set_json(hres, {{"error", e.what()}}, 400); // Debug: treat as client-side issue
-#else
-    bulgogi::set_json(hres, {{"error", "Internal Server Error"}}, 500); // Release: production-safe
-#endif
+**Method**: `POST`
+**Request body**: A JSON array of user IDs (integers)
+
+```json
+[42, 84, 128]
+```
+
+**Response**:
+
+```json
+{
+  "profiles": [
+    {
+      "user_id": 42,
+      "first_name": "Alice",
+      "surname": "Wang",
+      "gender": true,
+      "avatar_url": "base64..."
+    },
+    {
+      "user_id": 84,
+      "first_name": "Bob",
+      "surname": "Chen",
+      "gender": false,
+      "avatar_url": "base64..."
+    }
+  ]
 }
 ```
 
-#### Implications:
+**Error response** (invalid input or server error):
 
-* In **Debug mode**, unhandled exceptions return `400` with the error message (helps during dev).
-* In **Release mode**, the same code returns `500` with a generic message (avoids leaking internals).
-
----
-
-### ✅ Best Practices
-
-* **Always catch expected exceptions inside your handler** to generate controlled responses.
-
-  ```c++
-  REGISTER_VIEW(do_something) {
-      try {
-        // risky operation
-      } catch (const std::runtime_error& err) {
-          // You can build a custom message instead of exposing err.what()
-          std::string err_str = std::string("Failed to process item: ") + std::to_string(item_id);
-          bulgogi::set_json(res, {{"error", err_str}}, 400);
-          return;
-      }
-  ```
-
-* **Never deploy with `NDEBUG` undefined** — Debug mode reveals internal logic and stack traces.
-
-* Treat `500` as a **last-resort, severe server fault**. Don't rely on global `catch` to handle logic errors.
-
----
-
-📌 You are responsible for graceful handling in production.
-This framework is intentionally minimal and avoids runtime safety layers.
-
----
-
-## 📦 `jh::pod` Introduction
-
-`jh::pod` is a modern C++20 system for defining and working with **plain old data** (POD) safely and portably.
-
-### 💡 Why It Matters
-
-| Advantage                   | Benefit                       |
-|-----------------------------|-------------------------------|
-| Trivial layout              | Zero-cost copying             |
-| No constructors/destructors | Works with `memcpy`, `mmap`   |
-| Fixed-size layout           | Cross-platform deterministic  |
-| Type-safe utilities         | Structs, pairs, arrays, flags |
-
----
-
-### 🧱 Defining POD
-
-```c++
-// Only pod-like attributes are allowed, otherwise compile error
-JH_POD_STRUCT(User,
-    uint32_t id;
-    jh::pod::array<char, 16> name; // wrapper for char[16], better locality than std::string
-);
-// Only attributes and a default operator==() are generated
+```json
+{
+  "error": "Invalid request format"
+}
 ```
 
-Use `JH_ASSERT_POD_LIKE(Type)` to validate third-party types.
+or
+
+```json
+{
+  "error": "some exception message"
+}
+```
+
 
 ---
 
-### 🔧 Included Types
+## 👤 `/api/get_user_profile`
 
-* `pod::pair<T1, T2>` a pod version of `std::pair`
-* `pod::optional<T>`  a pod version of `std::optional`
-* `pod::array<T, N>`  a wrapper for `T[N]` with STL-like interface
-* `pod::bitflags<N>`  a container for bitwise flags
-* `pod::bytes_view`   a view of raw bytes, offers `clone<T>()` for copying and `hash()` for hashing
-* `pod::string_view`  a view of string-like data, offers basic string operations
-* `pod::span<T>`      a view of contiguous data, similar to `std::span`
+Get the **full user profile** for a given ID.
+**Method**: `GET`
+**Query param**: `id={number}`
 
----
+> gender: `true` for female, `false` for male
 
-### 🧪 Example: `bitflags`
+**Response**:
 
-```c++
-jh::pod::bitflags<32> flags{};
-flags.set(4);
-if (flags.has(4)) { /* logic */ }
+```json
+{
+  "user_id": 42,
+  "first_name": "Alice",
+  "surname": "Wang",
+  "gender": true,
+  "avatar_url": "base64...",
+  "interests": [
+    { "name": "Music", "value": 9 },
+    "..."
+  ],
+  "tags": ["Is Creator", "Night Owl", "..."]
+}
 ```
 
 ---
 
-### 📤 Memory View & Cloning
+## 👤 `/api/get_user_profile_simple`
 
-```c++
-struct Packet { uint16_t id; uint8_t code; };
-JH_ASSERT_POD_LIKE(Packet);
+Get a **lightweight profile** (name/avatar only).
+**Method**: `GET`
+**Query param**: `id={number}`
 
-Packet p{10, 2};
-auto view = jh::pod::bytes_view::from(p);
-Packet copy = view.clone<Packet>(); // clone can only be applied to strict POD types
+**Response**:
+
+```json
+{
+  "user_id": 42,
+  "first_name": "Alice",
+  "surname": "Wang",
+  "gender": true,
+  "avatar_url": "base64..."
+}
 ```
 
-Also supports hashing, range access, and structured equality.
+---
+
+## 🤝 `/api/get_user_friends`
+
+Get a list of user IDs this user interacts with regularly.
+**Method**: `GET`
+**Query param**: `id={number}`
+
+**Response**:
+
+```json
+{ "friends": [8, 15, 21] }
+```
 
 ---
 
-### ✅ STL Compatibility
+## ⏳ `/api/simulate_day`
 
-All `jh::pod` types are compatible with `std::vector`, `std::unordered_map`, and Beast buffers.
-You get `memcpy` speed + full type safety.
+Simulate one day of activity:
+
+* New interactions
+* Friendships
+* New users
+  **Method**: `POST`
+
+**Response**:
+
+```json
+{
+  "new_users": 18,
+  "new_friendships": 274,
+  "total_interactions": 3921
+}
+```
 
 ---
 
-> 🔗 Learn more at [JH Toolkit repo](https://github.com/JeongHan-Bae/jh-toolkit)  
-> 🔗 See [quick_start.md](quick_start.md) to get started  
-> 🔗 See [build.md](../build.md) for CMake and Docker instructions
+## 🧭 `/api/recommend_fof`
+
+Recommend **friends-of-friends** using A\* traversal.
+**Method**: `GET`
+**Query param**: `id={number}`
+
+**Response**:
+
+```json
+{
+  "recommendations": [51, 87, 90, "..."]
+}
+```
+
+---
+
+## 🧍 `/api/recommend_strangers`
+
+Recommend strangers with **similar interests and traits**, excluding known friends.
+**Method**: `GET`
+**Query param**: `id={number}`
+
+**Response**:
+
+```json
+{
+  "recommendations": [73, 118, 103, "..."]
+}
+```
+
+---
+
+## 🧱 Initialization Behavior
+
+If you are using a **new/empty database**, you must call:
+
+```http
+POST /api/set_db_connection?renew=true
+```
+
+This will create the required tables:
+
+* `UsersFabric`
+* `UserModels`
+* With proper constraints and schema
+
+> This logic is embedded directly in the backend and **does not require any external `.sql` file.**
+
+---
+
+## 🐳 Docker Considerations
+
+If the backend runs **inside Docker**, remember:
+
+* `localhost` from within Docker refers to the container itself.
+
+* To connect to your **host MySQL**, use:
+
+  * `host.docker.internal` (available on **Windows** and **macOS** with Docker Desktop)
+  * On **Linux**, this may not work by default. You can:
+
+    * Manually expose host IP (e.g., `172.17.0.1`)
+    * Or use `--add-host=host.docker.internal:host-gateway` on Docker 20.10+
+
+* Alternatively, define a **Docker network** and connect by service name (`mysql`, `api`, etc.) if both containers are in the same `docker-compose` file.
+
+For more information, see [`build.md`](../build.md).
