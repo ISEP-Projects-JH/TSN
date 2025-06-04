@@ -112,4 +112,14 @@ COPY --from=builder /tmp/${APP}/build/${APP} /usr/app/${APP}
 WORKDIR /usr/app
 EXPOSE ${PORT}
 ENV APP=${APP}
-CMD ["sh", "-c", "mysqld --port=${MYSQL_PORT} & /usr/app/${APP}"]
+ENV InnerMySQL=${InnerMySQL}
+CMD ["sh", "-c", "\
+if [ \"$InnerMySQL\" = \"true\" ]; then \
+    echo '🔄 Starting MySQL...'; \
+    mysqld_safe --port=${MYSQL_PORT} & \
+    while ! mysqladmin ping --silent; do sleep 1; done; \
+    echo '✅ MySQL is up.'; \
+fi && \
+echo '🚀 Starting app...' && \
+/usr/app/${APP}"]
+
