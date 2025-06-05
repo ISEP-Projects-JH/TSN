@@ -77,19 +77,21 @@ void views::check_head([[maybe_unused]] const bulgogi::Request &req) {
     if (req.find("Origin") != req.end()) {
         std::string origin = std::string(req["Origin"]);
         if (origin.empty()) {
-            // dev: simulate all non-empty origins as allowed
             throw std::runtime_error("CORS blocked: origin not allowed");
         }
     }
 
+    // Allow all common headers for development
     if (req.find("Access-Control-Request-Headers") != req.end()) {
         std::string headers = std::string(req["Access-Control-Request-Headers"]);
-        if (headers.find("Authorization") == std::string::npos &&
-            headers.find("authorization") == std::string::npos) {
-            throw std::runtime_error("CORS preflight failed: Authorization not allowed");
+        // Don't block unless explicitly forbidden
+        if (headers.find("Content-Type") == std::string::npos &&
+            headers.find("Authorization") == std::string::npos) {
+            throw std::runtime_error("CORS preflight failed: required header not allowed");
         }
     }
 }
+
 
 REGISTER_VIEW(ping) {
     if (!check_method(req, bulgogi::http::verb::get, res)) return;
