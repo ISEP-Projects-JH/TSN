@@ -121,12 +121,13 @@ using download_xml = bulgogi::set_download<download_types::XML>;
         } catch (const std::exception &e) {
             // Unauthorized
             set_text(res, std::string("Unauthorized: ") + e.what(), 401);
-            return;
+
         }
 
         res.set(http::field::access_control_allow_origin, allow_origin);
         res.set(http::field::access_control_allow_methods, "GET, POST, OPTIONS");
-        res.set(http::field::access_control_allow_headers, "Content-Type");
+        res.set(http::field::access_control_allow_headers, "Content-Type, Authorization");
+        res.set(http::field::access_control_max_age, "86400");
     }
 
     [[maybe_unused]] inline std::optional<std::string> get_query_param(
@@ -157,13 +158,4 @@ using download_xml = bulgogi::set_download<download_types::XML>;
     }
 
 }
-/**
- * @page usage_examples 使用范例
- *
- * 这个页面展示了如何使用 @ref views::check_head 方法。
- *
- * \code{.cpp}
- * MyClass obj;
- * obj.doSomething();
- * \endcode
- */
+

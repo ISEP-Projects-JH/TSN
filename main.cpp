@@ -85,6 +85,7 @@ void handle_request(
             bulgogi::set_json(hres, {{"error", "Internal Server Error"}}, 500); // Release: production-safe
 #endif
         }
+        bulgogi::apply_cors(req, hres);
         res = std::move(hres);
     } else {
         bulgogi::set_text(res, "404 Not Found: " + route, 404);

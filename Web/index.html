@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Trigger API</title>
+</head>
+<body>
+<h1>Trigger API Call</h1>
+<button id="triggerBtn">Trigger /api/refresh_db</button>
+<pre id="output"></pre>
+
+<script>
+    document.getElementById("triggerBtn").addEventListener("click", async () => {
+        const output = document.getElementById("output");
+        output.textContent = "Sending request...";
+
+        try {
+            const response = await fetch("http://localhost:8080/api/refresh_db", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({})  // 如果 API 需要请求体，否则可以删掉
+            });
+
+            if (response.status === 204) {
+                output.textContent = "✅ Request successful. No content returned (204).";
+            } else {
+                const data = await response.json();
+                output.textContent = "✅ Response:\n" + JSON.stringify(data, null, 2);
+            }
+        } catch (error) {
+            output.textContent = "❌ Error:\n" + error;
+        }
+    });
+</script>
+</body>
+</html>
