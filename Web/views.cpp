@@ -8,6 +8,7 @@
 #include <iostream>
 #include <random>
 #include <mysql/mysql.h>
+#include <thread>
 
 namespace json = boost::json;
 using bulgogi::Request; /// @brief HTTP request
@@ -332,52 +333,36 @@ REGISTER_VIEW(api, get_user_friends) {
 
 const char *db_source = R"__db_src__(
 -- Temporarily disable foreign key checks to prevent dependency errors during creation
-SET
-FOREIGN_KEY_CHECKS = 0;
+SET FOREIGN_KEY_CHECKS = 0;
 
--- ---------------------------------------------------------
--- Create the parent table: `UsersFabric`
--- Stores user base metadata (name, avatar, gender via avatar_id)
--- ---------------------------------------------------------
-DROP TABLE IF EXISTS `UsersFabric`;
-CREATE TABLE `UsersFabric`
-(
-    `user_id`       BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, -- Unique user ID, auto-generated
-    `first_name_id` INT UNSIGNED NOT NULL,                   -- Index to backend-maintained first name pool
-    `last_name_id`  INT UNSIGNED NOT NULL,                   -- Index to backend-maintained last name pool
-    `avatar_id`     INT UNSIGNED NOT NULL,                   -- Index to avatar list, also encodes gender (even: male, odd: female)
-    PRIMARY KEY (`user_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-  AUTO_INCREMENT = 1;
-
--- ---------------------------------------------------------
--- Create the child table: `UserModels`
--- Holds interests, tags, and friend interactions for each user
--- ---------------------------------------------------------
+-- Drop old tables if exist
 DROP TABLE IF EXISTS `UserModels`;
-CREATE TABLE `UserModels`
-(
-    `user_id`      BIGINT UNSIGNED NOT NULL, -- FK to UsersFabric.user_id
-    `interests_16` BIGINT UNSIGNED NOT NULL, -- 16 x 4-bit encoded interest scores (0–15)
-    `base_64_bits` BIGINT UNSIGNED NOT NULL, -- 64 x 1-bit boolean/one-hot tags
-    `friends`      BLOB NOT NULL,            -- Serialized friend array: pod::array<pair<uint32_t, uint32_t>, 256>
+DROP TABLE IF EXISTS `UsersFabric`;
+
+-- Create parent table: UsersFabric
+CREATE TABLE `UsersFabric` (
+    `user_id`       BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `first_name_id` INT UNSIGNED NOT NULL,
+    `last_name_id`  INT UNSIGNED NOT NULL,
+    `avatar_id`     INT UNSIGNED NOT NULL,
     PRIMARY KEY (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci AUTO_INCREMENT = 1;
+
+-- Create child table: UserModels (with inline foreign key)
+CREATE TABLE `UserModels` (
+    `user_id`      BIGINT UNSIGNED NOT NULL,
+    `interests_16` BIGINT UNSIGNED NOT NULL,
+    `base_64_bits` BIGINT UNSIGNED NOT NULL,
+    `friends`      BLOB NOT NULL,
+    PRIMARY KEY (`user_id`),
+    CONSTRAINT `fk_user_id` FOREIGN KEY (`user_id`)
+        REFERENCES `UsersFabric` (`user_id`)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ---------------------------------------------------------
--- Add foreign key constraint linking model to fabric
--- Ensures one-to-one relation; cascade on delete/update
--- ---------------------------------------------------------
-ALTER TABLE `UserModels`
-    ADD CONSTRAINT `fk_user_id`
-        FOREIGN KEY (`user_id`)
-            REFERENCES `UsersFabric` (`user_id`)
-            ON DELETE CASCADE
-            ON UPDATE CASCADE;
-
--- Restore foreign key checks
-SET
-FOREIGN_KEY_CHECKS = 1;
+-- Restore FK checks
+SET FOREIGN_KEY_CHECKS = 1;
 
 )__db_src__";
 
@@ -407,23 +392,31 @@ REGISTER_VIEW(api, set_db_connection) {
         if (renew && *renew == "true") {
             std::istringstream ss(db_source);
             std::string line, statement;
+            int sql_id = 0;
 
-            std::cout << db_source << std::endl;
-
+            std::cout << "====== Begin Executing SQL Script ======" << std::endl;
             while (std::getline(ss, line)) {
-                if (line.empty() || line.starts_with("--")) continue; // skip comments
+                if (line.empty() || line.starts_with("--")) continue;
 
                 statement += line + "\n";
                 if (line.find(';') != std::string::npos) {
-                    std::cout << "[SQL] Executing:\n" << statement << std::endl;
+                    sql_id++;
+                    std::cout << "[SQL #" << sql_id << "] Executing:\n" << statement << std::endl;
 
                     if (mysql_query(g_mysql_conn, statement.c_str()) != 0) {
+                        std::cerr << "❌ SQL Error at statement #" << sql_id << ": " << mysql_error(g_mysql_conn) << std::endl;
                         throw std::runtime_error(mysql_error(g_mysql_conn));
                     }
+
+                    std::cout << "✔️ SQL OK\n" << std::endl;
                     statement.clear();
                 }
             }
+            std::cout << "====== SQL Script Executed Successfully ======" << std::endl;
         }
+
+        // Wait to be prepared
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
         g_user_handler = std::make_unique<social::UserModelHandler>(g_mysql_conn);
         g_fabric_handler = std::make_unique<fabric::FabricInfoHandler>(g_mysql_conn);
