@@ -1,3 +1,6 @@
+/// Copyright (c) 2025 bulgogi-framework
+/// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #include <boost/beast/http.hpp>
@@ -21,10 +24,21 @@ namespace views{
 
 namespace bulgogi {
 
+    /**
+     * @brief Check if the request has a JSON Content-Type.
+     * @param req Incoming HTTP request.
+     * @return true if Content-Type starts with "application/json".
+     */
     [[maybe_unused]] inline bool is_json(const Request &req) {
         return req[http::field::content_type].starts_with("application/json");
     }
 
+    /**
+     * @brief Set response as JSON body with status code.
+     * @param res Response to populate.
+     * @param value JSON value to serialize into body.
+     * @param status_code HTTP status code (default: 200).
+     */
     inline void set_json(Response &res, const boost::json::value &value, int status_code = 200) {
         res.result(http::status(status_code));
         res.set(http::field::content_type, "application/json");
@@ -32,6 +46,12 @@ namespace bulgogi {
         res.prepare_payload();
     }
 
+    /**
+     * @brief Set response as plain text body.
+     * @param res Response to populate.
+     * @param text Body content.
+     * @param status_code HTTP status code (default: 200).
+     */
     inline void set_text(Response &res, std::string_view text, int status_code = 200) {
         res.result(http::status(status_code));
         res.set(http::field::content_type, "text/plain");
@@ -39,6 +59,12 @@ namespace bulgogi {
         res.prepare_payload();
     }
 
+    /**
+     * @brief Set response as HTML content.
+     * @param res Response to populate.
+     * @param html HTML string.
+     * @param status_code HTTP status code (default: 200).
+     */
     [[maybe_unused]] inline void set_html(Response &res, std::string_view html, int status_code = 200) {
         res.result(http::status(status_code));
         res.set(http::field::content_type, "text/html");
@@ -46,6 +72,12 @@ namespace bulgogi {
         res.prepare_payload();
     }
 
+    /**
+     * @brief Set response as binary file download (octet-stream).
+     * @param res Response to populate.
+     * @param binary_data File content.
+     * @param filename Download file name (Content-Disposition header).
+     */
     [[maybe_unused]] inline void set_binary(Response &res, std::string_view binary_data, const std::string &filename) {
         res.result(http::status::ok);
         res.set(http::field::content_type, "application/octet-stream");
@@ -55,7 +87,12 @@ namespace bulgogi {
     }
 
     /**
-     * Example usage:
+     * @tparam Mime MIME type tag (e.g., "csv", "yaml") as jh::pod::array.
+     * @brief Set response as downloadable text file with specific MIME type.
+     * @param res Response object.
+     * @param content File content.
+     * @param filename Suggested filename for download.
+     * @example
      * @code{.cpp}
      *
      * namespace download_types {
@@ -67,7 +104,7 @@ namespace bulgogi {
      *     constexpr jh::pod::array<char, 32> MD   = {"markdown"};
      *     constexpr jh::pod::array<char, 32> XML  = {"xml"};
      * }
-     * 
+     *
      * using download_csv = bulgogi::set_download<download_types::CSV>;
      * using download_tsv = bulgogi::set_download<download_types::TSV>;
      * using download_yaml = bulgogi::set_download<download_types::YAML>;
@@ -89,14 +126,31 @@ namespace bulgogi {
         }
     };
 
+    /**
+     * @brief Parse and return JSON object from request body.
+     * @param req Request with JSON body.
+     * @return Parsed boost::json::object.
+     * @throws boost::json::system_error on invalid JSON.
+     */
     [[maybe_unused]] inline boost::json::object get_json_obj(const Request &req) {
         return boost::json::parse(req.body()).as_object();
     }
 
+    /**
+     * @brief Convert HTTP verb to string representation.
+     * @param method HTTP verb.
+     * @return String view of the method name (e.g., "GET").
+     */
     [[maybe_unused]] inline std::string_view method_string(http::verb method) {
         return http::to_string(method);
     }
 
+    /**
+     * @brief Issue an HTTP redirect with given location and status code.
+     * @param res Response object.
+     * @param location Target URL.
+     * @param code Redirect status code (default: 302).
+     */
     [[maybe_unused]] inline void set_redirect(Response &res, const std::string &location, int code = 302) {
         res.result(static_cast<http::status>(code));
         res.set(http::field::location, location);
@@ -105,6 +159,12 @@ namespace bulgogi {
         res.prepare_payload();
     }
 
+    /**
+     * @brief Set CORS headers for response.
+     * @param res Response to modify.
+     * @param allow_origin Allowed origin (default: "*").
+     * @param allowed_methods Allowed HTTP methods for CORS.
+     */
     inline void apply_cors(bulgogi::Response& res,
                            std::string_view allow_origin = "*",
                            std::initializer_list<http::verb> allowed_methods = {}) {
@@ -126,6 +186,26 @@ namespace bulgogi {
         res.set(http::field::access_control_max_age, STR(CORS_MAX_AGE));
     }
 
+    /**
+     * @brief Check if the incoming HTTP request uses an allowed method.
+     *
+     * This helper:
+     * - Validates the HTTP verb against an expected list.
+     * - Automatically handles `OPTIONS` preflight requests with correct CORS headers.
+     * - Sets a `405` JSON error response if the method is not allowed.
+     *
+     * You should call this **immediately after entering a handler**, like so:
+     * @code
+     * if (!check_method(req, http::verb::post, res)) return;
+     * @endcode
+     *
+     * @param req The incoming request object.
+     * @param allowed_methods One or more allowed HTTP verbs.
+     * @param res The response to populate on error or preflight.
+     * @param allow_origin Optional CORS origin override (defaults to "*").
+     * @return `true` if the method is allowed and the handler should proceed.
+     *         `false` if preflight was handled or method was denied.
+     */
     inline bool check_method(const Request& req,
                              std::initializer_list<http::verb> allowed_methods,
                              Response& res,
@@ -165,13 +245,28 @@ namespace bulgogi {
         return true;
     }
 
+
+    /**
+     * @brief Shorthand for checking a single allowed HTTP method.
+     * @param req Request object.
+     * @param allowed_method Single accepted HTTP verb.
+     * @param res Response for error handling.
+     * @param allow_origin CORS origin (default "*").
+     * @return true if method is allowed; false otherwise.
+     */
     inline bool check_method(const Request& req,
                              http::verb allowed_method,
                              Response& res,
                              std::string_view allow_origin = "*") {
         return check_method(req, {allowed_method}, res, allow_origin);
     }
-    
+
+    /**
+     * @brief Extract query string parameter from URL.
+     * @param req HTTP request with URL.
+     * @param key Name of the query parameter.
+     * @return Value if key exists; std::nullopt otherwise.
+     */
     [[maybe_unused]] inline std::optional<std::string> get_query_param(
             const boost::beast::http::request<boost::beast::http::string_body> &req,
             std::string_view key) {
@@ -200,4 +295,3 @@ namespace bulgogi {
     }
 
 }
-

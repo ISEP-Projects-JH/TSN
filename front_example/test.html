@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>API Tester</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 2rem;
+    }
+    .result {
+      border: 1px solid #ccc;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      border-left: 6px solid transparent;
+      white-space: pre-wrap;
+    }
+    .success {
+      border-left-color: green;
+      background: #f0fff0;
+    }
+    .failure {
+      border-left-color: red;
+      background: #fff0f0;
+    }
+    .profile-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-top: 0.5rem;
+    }
+    .profile-item {
+      text-align: center;
+      font-size: 12px;
+    }
+    .profile-item img {
+      width: 64px;
+      height: 64px;
+      display: block;
+      margin: 0 auto 0.25rem;
+    }
+    h2 {
+      margin-bottom: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+<h1>🌐 API Test Results</h1>
+<div id="output">Initializing...</div>
+
+<script type="module">
+  import {
+    initializeAPI,
+    ping,
+    refreshDB,
+    getRandomUserID,
+    getTotalCount,
+    batchGetSimpleProfiles,
+    getUserProfile,
+    getUserProfileSimple,
+    getUserFriends,
+    simulateDay,
+    recommendFOF,
+    recommendStrangers
+  } from './apiClient.js';
+
+  const output = document.getElementById('output');
+
+  function logResult(title, data, success = true) {
+    const div = document.createElement('div');
+    div.className = 'result ' + (success ? 'success' : 'failure');
+    let imageHTML = '';
+
+    // single profile
+    const {surname, profiles, first_name, avatar_url} = data;
+    if (data ? avatar_url : undefined) {
+      imageHTML = `
+        <div class="profile-item">
+          <img src="data:image/png;base64,${avatar_url}" alt="avatar" />
+          ${first_name || ''} ${surname || ''}
+        </div>`;
+    }
+
+    // multi profiles
+    if (profiles?.length > 0) {
+      imageHTML = `<div class="profile-grid">` +
+              profiles.map(p => `
+          <div class="profile-item">
+            <img src="data:image/png;base64,${p.avatar_url}" alt="avatar" />
+            ${p.first_name} ${p.surname}
+          </div>
+        `).join('') +
+              `</div>`;
+    }
+
+    div.innerHTML = `<h2>${success ? '✅' : '❌'} ${title}</h2>${imageHTML}<code>${JSON.stringify(data, null, 2)}</code>`;
+    output.appendChild(div);
+  }
+
+  async function runTests() {
+    output.innerHTML = '';
+
+    const initResult = await initializeAPI();
+    logResult('Initialize API', initResult, initResult.status);
+    if (!initResult.status) return;
+
+    try {
+      const pingRes = await ping();
+      logResult('Ping', pingRes);
+
+      const refreshRes = await refreshDB();
+      logResult('Refresh DB', refreshRes);
+
+      const userIdRes = await getRandomUserID();
+      logResult('Get Random User ID', userIdRes);
+      const userId = userIdRes.user_id;
+
+      const countRes = await getTotalCount();
+      logResult('Get Total Count', countRes);
+
+      const batchRes = await batchGetSimpleProfiles([userId]);
+      logResult('Batch Get Simple Profiles', batchRes);
+
+      const profileRes = await getUserProfile(userId);
+      logResult('Get User Profile', profileRes);
+
+      const profileSimpleRes = await getUserProfileSimple(userId);
+      logResult('Get Simple Profile', profileSimpleRes);
+
+      const friendsRes = await getUserFriends(userId);
+      logResult('Get User Friends', friendsRes);
+
+      const simulateRes = await simulateDay();
+      logResult('Simulate Day', simulateRes);
+
+      const fofRes = await recommendFOF(userId);
+      logResult('Recommend FOF IDs', fofRes);
+      const {recommendations: recommendations1} = fofRes;
+      if (Array.isArray(recommendations1) && recommendations1.length > 0) {
+        const fofProfiles = await batchGetSimpleProfiles(recommendations1);
+        logResult('FOF Profiles', fofProfiles);
+      }
+
+      const strangersRes = await recommendStrangers(userId);
+      logResult('Recommend Strangers IDs', strangersRes);
+      const {recommendations} = strangersRes;
+      if (Array.isArray(recommendations) && recommendations.length > 0) {
+        const strangerProfiles = await batchGetSimpleProfiles(recommendations);
+        logResult('Stranger Profiles', strangerProfiles);
+      }
+
+    } catch (e) {
+      logResult('Unhandled Error', e.message || e, false);
+    }
+  }
+
+  runTests();
+</script>
+</body>
+</html>

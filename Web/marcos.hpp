@@ -1,3 +1,6 @@
+/// Copyright (c) 2025 bulgogi-framework
+/// SPDX-License-Identifier: MIT
+
 #pragma once
 
 #define ROUTE_NAME1(a) a

@@ -243,8 +243,8 @@ REGISTER_VIEW(api, batch_get_simple_profiles) {
 
     try {
         for (const auto &id: user_ids) {
-            if (!id.is_uint64()) continue; // Skip invalid IDs
-            uint32_t user_id = id.as_uint64();
+            if (!id.is_int64()) continue; // Skip invalid IDs
+            uint32_t user_id = id.as_int64();
             auto simple_profile = fabric::api::get_user_simple_profile(user_id, *g_fabric_handler);
             profiles_json.emplace_back(fabric::api::simple_json(simple_profile, user_id));
         }

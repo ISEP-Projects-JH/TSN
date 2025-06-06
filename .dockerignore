@@ -56,3 +56,4 @@ docker/
 .dockerignore
 
 LICENSE
+front_example/
