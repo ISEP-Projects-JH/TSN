@@ -3,6 +3,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/json.hpp>
 #include <jh/pod>
+#include "marcos.hpp"
 
 
 namespace bulgogi {
@@ -38,7 +39,7 @@ namespace bulgogi {
         res.prepare_payload();
     }
 
-    inline void set_html(Response &res, std::string_view html, int status_code = 200) {
+    [[maybe_unused]] inline void set_html(Response &res, std::string_view html, int status_code = 200) {
         res.result(http::status(status_code));
         res.set(http::field::content_type, "text/html");
         res.body() = std::string(html);
@@ -55,24 +56,25 @@ namespace bulgogi {
 
     /**
      * Example usage:
-     * @code
-namespace download_types {
-    constexpr jh::pod::array<char, 32> CSV  = {"csv"};
-    constexpr jh::pod::array<char, 32> TSV  = {"tab-separated-values"};
-    constexpr jh::pod::array<char, 32> YAML = {"yaml"};
-    constexpr jh::pod::array<char, 32> HTML = {"html"};
-    constexpr jh::pod::array<char, 32> PLAIN = {"plain"};
-    constexpr jh::pod::array<char, 32> MD   = {"markdown"};
-    constexpr jh::pod::array<char, 32> XML  = {"xml"};
-}
-
-using download_csv = bulgogi::set_download<download_types::CSV>;
-using download_tsv = bulgogi::set_download<download_types::TSV>;
-using download_yaml = bulgogi::set_download<download_types::YAML>;
-using download_html = bulgogi::set_download<download_types::HTML>;
-using download_plain = bulgogi::set_download<download_types::PLAIN>;
-using download_md = bulgogi::set_download<download_types::MD>;
-using download_xml = bulgogi::set_download<download_types::XML>;
+     * @code{.cpp}
+     *
+     * namespace download_types {
+     *     constexpr jh::pod::array<char, 32> CSV  = {"csv"};
+     *     constexpr jh::pod::array<char, 32> TSV  = {"tab-separated-values"};
+     *     constexpr jh::pod::array<char, 32> YAML = {"yaml"};
+     *     constexpr jh::pod::array<char, 32> HTML = {"html"};
+     *     constexpr jh::pod::array<char, 32> PLAIN = {"plain"};
+     *     constexpr jh::pod::array<char, 32> MD   = {"markdown"};
+     *     constexpr jh::pod::array<char, 32> XML  = {"xml"};
+     * }
+     * 
+     * using download_csv = bulgogi::set_download<download_types::CSV>;
+     * using download_tsv = bulgogi::set_download<download_types::TSV>;
+     * using download_yaml = bulgogi::set_download<download_types::YAML>;
+     * using download_html = bulgogi::set_download<download_types::HTML>;
+     * using download_plain = bulgogi::set_download<download_types::PLAIN>;
+     * using download_md = bulgogi::set_download<download_types::MD>;
+     * using download_xml = bulgogi::set_download<download_types::XML>;
      * @endcode
      */
     template<jh::pod::array<char, 32> Mime>
@@ -86,18 +88,6 @@ using download_xml = bulgogi::set_download<download_types::XML>;
             res.prepare_payload();
         }
     };
-
-    inline bool check_method(const Request &req, http::verb expected, Response &res) {
-        if (req.method() != expected) {
-            set_json(res, {
-                    {"error",    "Method Not Allowed"},
-                    {"expected", http::to_string(expected)},
-                    {"got",      http::to_string(req.method())}
-            }, 405);
-            return false;
-        }
-        return true;
-    }
 
     [[maybe_unused]] inline boost::json::object get_json_obj(const Request &req) {
         return boost::json::parse(req.body()).as_object();
@@ -115,21 +105,73 @@ using download_xml = bulgogi::set_download<download_types::XML>;
         res.prepare_payload();
     }
 
-    inline void apply_cors(const Request &req, bulgogi::Response &res, std::string_view allow_origin = "*") {
-        try {
-            views::check_head(req);
-        } catch (const std::exception &e) {
-            // Unauthorized
-            set_text(res, std::string("Unauthorized: ") + e.what(), 401);
-
-        }
+    inline void apply_cors(bulgogi::Response& res,
+                           std::string_view allow_origin = "*",
+                           std::initializer_list<http::verb> allowed_methods = {}) {
 
         res.set(http::field::access_control_allow_origin, allow_origin);
-        res.set(http::field::access_control_allow_methods, "GET, POST, OPTIONS");
+
+        if (allowed_methods.size()) {
+            std::ostringstream oss;
+            for (auto it = allowed_methods.begin(); it != allowed_methods.end(); ++it) {
+                oss << http::to_string(*it);
+                if (std::next(it) != allowed_methods.end()) oss << ", ";
+            }
+            oss << ", " << http::to_string(http::verb::options);  // preflight
+
+            res.set(http::field::access_control_allow_methods, oss.str());
+        }
+
         res.set(http::field::access_control_allow_headers, "Content-Type, Authorization");
-        res.set(http::field::access_control_max_age, "86400");
+        res.set(http::field::access_control_max_age, STR(CORS_MAX_AGE));
     }
 
+    inline bool check_method(const Request& req,
+                             std::initializer_list<http::verb> allowed_methods,
+                             Response& res,
+                             std::string_view allow_origin = "*") {
+        const auto req_method = req.method();
+
+        if (req_method == http::verb::options){
+            // OPTIONS preflight
+            apply_cors(res, allow_origin, allowed_methods);  // get cors header automatically
+            return false; // exist early
+        }
+
+        const bool allowed = std::any_of(allowed_methods.begin(), allowed_methods.end(),
+                                         [&](http::verb v) { return v == req_method; });
+
+        if (!allowed) {
+            set_json(res, {
+                    {"error",    "Method Not Allowed"},
+                    {"expected", [allowed_methods]{
+                        std::ostringstream oss;
+                        for (auto it = allowed_methods.begin(); it != allowed_methods.end(); ++it) {
+                            oss << http::to_string(*it);
+                            if (std::next(it) != allowed_methods.end()) oss << ", ";
+                        }
+                        return oss.str();
+                    }()},
+                    {"got", http::to_string(req_method)}
+            }, 405);
+
+            apply_cors(res, allow_origin, allowed_methods);
+
+            return false;
+        }
+
+        apply_cors(res, allow_origin, allowed_methods);  // get cors header automatically
+
+        return true;
+    }
+
+    inline bool check_method(const Request& req,
+                             http::verb allowed_method,
+                             Response& res,
+                             std::string_view allow_origin = "*") {
+        return check_method(req, {allowed_method}, res, allow_origin);
+    }
+    
     [[maybe_unused]] inline std::optional<std::string> get_query_param(
             const boost::beast::http::request<boost::beast::http::string_body> &req,
             std::string_view key) {

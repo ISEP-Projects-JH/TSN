@@ -259,33 +259,23 @@ REGISTER_VIEW(api, recommend_fof) {
     if (!check_method(req, bulgogi::http::verb::get, res)) return;
     if (!ensure_mysql_ready(res, g_mysql_conn)) return;
 
-    auto ids_obj = bulgogi::get_json_obj(req)["user_ids"];
-    if (!ids_obj.is_array() || ids_obj.as_array().empty()) {
-        set_json(res, {{"error", "Missing or invalid user IDs"}}, 400);
+    auto params = bulgogi::get_query_param(req, "id");
+    if (!params) {
+        set_json(res, {{"error", "Missing user ID"}}, 400);
         return;
     }
-    auto ids = ids_obj.as_array();
-    std::vector<uint32_t> user_ids;
-    for (const auto &id: ids) {
-        if (!id.is_int64()) {
-            set_json(res, {{"error", "Invalid user ID format"}}, 400);
-            return;
+    uint32_t user_id = std::stoul(*params);
+    try {
+        const auto user = g_user_handler->load_user_by_id(user_id);
+        auto result = social::recommend_A_star<64>(user, *g_user_handler);
+        boost::json::array recommendations_json;
+        for (const jh::pod::pod_like auto &id: result) {
+            if (id == INVALID_FRIEND_ID) continue; // Skip invalid entries
+            recommendations_json.emplace_back(id);
         }
-        user_ids.push_back(id.as_int64());
-    }
-    auto result = g_fabric_handler->batch_load_users_by_ids(user_ids);
-
-    boost::json::array profiles_json;
-
-    for (const auto &user: result) {
-        if (user.user_id == INVALID_FRIEND_ID) continue; // Skip invalid entries
-        try {
-            auto profile = fabric::api::get_user_simple_profile(user.user_id, *g_fabric_handler);
-            profiles_json.emplace_back(fabric::api::simple_json(profile, user.user_id));
-        } catch (const std::exception &e) {
-            set_json(res, {{"error", e.what()}}, 500);
-            return;
-        }
+        set_json(res, {{"recommendations", recommendations_json}});
+    } catch (const std::exception &e) {
+        set_json(res, {{"error", e.what()}}, 500);
     }
 
 }

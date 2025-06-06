@@ -30,3 +30,7 @@
 #ifndef PORT
 #define PORT 8080
 #endif
+
+#ifndef CORS_MAX_AGE
+#define CORS_MAX_AGE 86400
+#endif
