@@ -32,6 +32,7 @@
     .profile-item {
       text-align: center;
       font-size: 12px;
+      max-width: 120px;
     }
     .profile-item img {
       width: 64px;
@@ -39,9 +40,32 @@
       display: block;
       margin: 0 auto 0.25rem;
     }
+    .profile-details {
+      margin-top: 1rem;
+    }
+    .profile-table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-bottom: 1rem;
+    }
+    .profile-table th, .profile-table td {
+      border: 1px solid #ccc;
+      padding: 0.5rem;
+      text-align: left;
+    }
+    .profile-table th {
+      background-color: #f9f9f9;
+    }
     h2 {
       margin-bottom: 0.5rem;
     }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-x: auto;
+      max-width: 100%;
+    }
+
   </style>
 </head>
 <body>
@@ -66,34 +90,72 @@
 
   const output = document.getElementById('output');
 
+  function buildProfileDetails(user) {
+    let html = '<div class="profile-details">';
+
+    if (user.interests?.length) {
+      html += `<h3>🎯 Interests</h3><table class="profile-table"><tr><th>Name</th><th>Value</th></tr>`;
+      html += user.interests.map(i =>
+              `<tr><td>${i.name}</td><td>${i.value}</td></tr>`
+      ).join('');
+      html += `</table>`;
+    }
+
+    if (user.tags?.length) {
+      html += `<h3>🏷️ Tags</h3><table class="profile-table"><tr><th>Tag</th></tr>`;
+      html += user.tags.map(tag =>
+              `<tr><td>${tag}</td></tr>`
+      ).join('');
+      html += `</table>`;
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function renderProfile(p) {
+    const base = `
+      <div class="profile-item">
+        <img src="data:image/png;base64,${p.avatar_url}" alt="avatar" />
+        ${p.first_name || ''} ${p.surname || ''}
+      </div>
+    `;
+
+    const details = (p.interests || p.tags) ? buildProfileDetails(p) : '';
+    return `<div>${base}${details}</div>`;
+  }
+
   function logResult(title, data, success = true) {
     const div = document.createElement('div');
     div.className = 'result ' + (success ? 'success' : 'failure');
-    let imageHTML = '';
+    let htmlContent = '';
 
-    // single profile
-    const {surname, profiles, first_name, avatar_url} = data;
-    if (data ? avatar_url : undefined) {
-      imageHTML = `
-        <div class="profile-item">
-          <img src="data:image/png;base64,${avatar_url}" alt="avatar" />
-          ${first_name || ''} ${surname || ''}
-        </div>`;
+    // 单个 profile
+    if (data?.avatar_url) {
+      htmlContent = renderProfile(data);
     }
-
-    // multi profiles
-    if (profiles?.length > 0) {
-      imageHTML = `<div class="profile-grid">` +
-              profiles.map(p => `
-          <div class="profile-item">
-            <img src="data:image/png;base64,${p.avatar_url}" alt="avatar" />
-            ${p.first_name} ${p.surname}
-          </div>
-        `).join('') +
+    // 多个 profile（含 simple & full）
+    else if (Array.isArray(data?.profiles) && data.profiles.length > 0) {
+      htmlContent = `<div class="profile-grid">` +
+              data.profiles.map(renderProfile).join('') +
               `</div>`;
     }
+    else {
+      let jsonString = JSON.stringify(data, null, 2);
+      jsonString = jsonString.replace(/\[\n([\s\S]*?)\n\s*\]/g, (match, inner) => {
+        const cleaned = inner
+                .split('\n')
+                .map(line => line.trim())
+                .filter(Boolean)
+                .join(' ');
+        return `[ ${cleaned} ]`;
+      });
 
-    div.innerHTML = `<h2>${success ? '✅' : '❌'} ${title}</h2>${imageHTML}<code>${JSON.stringify(data, null, 2)}</code>`;
+      htmlContent = `<pre>${jsonString}</pre>`;
+    }
+
+
+    div.innerHTML = `<h2>${success ? '✅' : '❌'} ${title}</h2>${htmlContent}`;
     output.appendChild(div);
   }
 
