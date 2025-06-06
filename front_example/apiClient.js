@@ -3,7 +3,7 @@ const PING_URL = 'http://localhost:8080/ping';
 
 // Connect to db
 const dbConfig = {
-    host: 'host.docker.internal',
+    host: 'localhost',
     user: 'usr_mdl_usr',
     password: 'example',
     database: 'synthetic_users_local',
