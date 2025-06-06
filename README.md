@@ -1,6 +1,6 @@
 # TSN: Social Network Backend with Bulgogi Framework
 
-TSN is a backend service for a social network platform, built with C++ and the [Bulgogi](https://github.com/boost-experimental/bulgogi) web framework. It features user modeling, friend recommendation (A* algorithm), interest and profile matching, and provides a RESTful API for user and simulation management.
+TSN is a backend service for a social network platform, built with C++ and the [Bulgogi](https://github.com/bulgogi-framework/bulgogi#readme) web framework. It features user modeling, friend recommendation (A* algorithm), interest and profile matching, and provides a RESTful API for user and simulation management.
 
 ## Features
 - High-performance HTTP server using Boost.Beast and Bulgogi
@@ -33,4 +33,4 @@ See [build.md](build.md) for build and deployment instructions, including Docker
 See [NOTICE.md](NOTICE.md) for third-party licenses.
 
 ## About Bulgogi
-This project uses the [Bulgogi](https://github.com/boost-experimental/bulgogi) C++ web framework for high-performance HTTP services.
+This project uses the [Bulgogi](https://github.com/bulgogi-framework/bulgogi#readme) C++ web framework for high-performance HTTP services.
